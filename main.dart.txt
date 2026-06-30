@@ -1,0 +1,1849 @@
+import 'package:flutter/material.dart';
+import 'dart:math';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart'; // Add this line
+
+void main() {
+  runApp(const BloomApp());
+}
+
+class BloomApp extends StatelessWidget {
+  const BloomApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Bloom',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        useMaterial3: true,
+        fontFamily: 'Georgia',
+      ),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+// --- 1. SPLASH SCREEN ---
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkUserStatus();
+  }
+
+  void _checkUserStatus() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? userName = prefs.getString('userName');
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (userName != null) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const LevelMapScreen()),
+        );
+      } else {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const WelcomeScreen()),
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.teal,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wb_sunny, size: 100, color: Colors.white),
+            const SizedBox(height: 20),
+            const Text(
+              "BLOOM",
+              style: TextStyle(
+                fontSize: 40,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: 4,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const CircularProgressIndicator(color: Colors.white),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 2. WELCOME SCREEN ---
+class WelcomeScreen extends StatefulWidget {
+  const WelcomeScreen({super.key});
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen> {
+  final TextEditingController _nameController = TextEditingController();
+
+  void _handleEntrance(String name) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('userName', name);
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LevelMapScreen()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F7F4),
+      body: Padding(
+        padding: const EdgeInsets.all(30.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              "Welcome to Bloom",
+              style: TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: Colors.teal,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              "A safe space to grow your confidence.",
+              style: TextStyle(fontSize: 16, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 40),
+            TextField(
+              controller: _nameController,
+              decoration: InputDecoration(
+                hintText: "Enter your name or nickname",
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(15),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  String name = _nameController.text.isEmpty
+                      ? "Brave Soul"
+                      : _nameController.text;
+                  _handleEntrance(name);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+                child: const Text(
+                  "Start My Journey",
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => _handleEntrance("Guest"),
+              child: const Text(
+                "Continue as Guest",
+                style: TextStyle(color: Colors.teal),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 3. LEVEL MAP ---
+class LevelMapScreen extends StatefulWidget {
+  const LevelMapScreen({super.key});
+
+  @override
+  State<LevelMapScreen> createState() => _LevelMapScreenState();
+}
+
+class _LevelMapScreenState extends State<LevelMapScreen> {
+  String _userName = "Loading...";
+  int _totalCompleted = 0;
+  int _currentStreak = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  void _loadUserData() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    // 1. Calculate Decay
+    String today = DateTime.now().toString().split(' ')[0];
+    String? lastDate = prefs.getString('lastCompletedDate');
+    double score = prefs.getDouble('confidenceScore') ?? 0.0;
+
+    if (lastDate != null && lastDate != today) {
+      DateTime now = DateTime.now();
+      DateTime last = DateTime.parse(lastDate);
+      int daysMissed =
+          now.difference(last).inDays -
+          1; // Excluding today and the day of completion
+
+      if (daysMissed > 0) {
+        score = score - (daysMissed * 2.0); // Lose 2 points per day missed
+        if (score < 0) score = 0;
+        await prefs.setDouble('confidenceScore', score);
+      }
+    }
+
+    setState(() {
+      _userName = prefs.getString('userName') ?? "Brave Soul";
+      _totalCompleted = score
+          .toInt(); // We use totalCompleted variable to show the score
+      _currentStreak = prefs.getInt('currentStreak') ?? 0;
+    });
+  }
+
+  void _updateProgressAndStreak(String levelName) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    // 1. Define Weights
+    Map<String, double> weights = {
+      "Seedling": 1.0,
+      "Sprout": 2.0,
+      "Leaf": 4.0,
+      "Stem": 7.0,
+      "Bloom": 12.0,
+    };
+
+    double currentScore = prefs.getDouble('confidenceScore') ?? 0.0;
+    double addedPoints = weights[levelName] ?? 1.0;
+    double newScore = currentScore + addedPoints;
+
+    await prefs.setDouble('confidenceScore', newScore);
+
+    // 2. Streak Logic
+    String today = DateTime.now().toString().split(' ')[0];
+    String? lastDate = prefs.getString('lastCompletedDate');
+    int streak = prefs.getInt('currentStreak') ?? 0;
+
+    if (lastDate != today) {
+      DateTime now = DateTime.now();
+      DateTime last = DateTime.parse(lastDate ?? "1970-01-01");
+      if (now.difference(last).inDays == 1) {
+        streak++;
+      } else {
+        streak = 1;
+      }
+      await prefs.setInt('currentStreak', streak);
+      await prefs.setString('lastCompletedDate', today);
+      int bestStreak = prefs.getInt('bestStreak') ?? 0;
+      if (streak > bestStreak) await prefs.setInt('bestStreak', streak);
+    }
+
+    setState(() {
+      _totalCompleted = newScore.toInt();
+      _currentStreak = prefs.getInt('currentStreak') ?? 0;
+    });
+  }
+
+  final Map<String, List<Map<String, String>>> allTasks = const {
+    "Seedling": [
+      {
+        "id": "S1",
+        "title": "The First Step",
+        "desc": "Make eye contact and smile at one person today.",
+      },
+      {
+        "id": "S2",
+        "title": "A Simple Hello",
+        "desc": "Say 'Good morning' or 'Hello' to a neighbor.",
+      },
+      {
+        "id": "S3",
+        "title": "The Thank You",
+        "desc": "Say 'Thank you' clearly to a shopkeeper.",
+      },
+      {
+        "id": "S4",
+        "title": "The Observation",
+        "desc": "Notice something positive about a stranger and smile.",
+      },
+      {
+        "id": "S5",
+        "title": "The Quiet Wave",
+        "desc": "Wave at someone you recognize from a distance.",
+      },
+      {
+        "id": "S6",
+        "title": "Door Hold",
+        "desc": "Hold the door open for someone behind you.",
+      },
+      {
+        "id": "S7",
+        "title": "The Nod",
+        "desc": "Give a friendly nod to a colleague as you pass them.",
+      },
+      {
+        "id": "S8",
+        "title": "The Mirror",
+        "desc": "Practice your 'confident smile' in the mirror for 1 minute.",
+      },
+      {
+        "id": "S9",
+        "title": "The Brief Glance",
+        "desc": "Look at someone for 2 seconds, then smile and look away.",
+      },
+      {
+        "id": "S10",
+        "title": "The Quiet Praise",
+        "desc": "Write a nice comment on someone's social media post.",
+      },
+      {
+        "id": "S11",
+        "title": "The Space Share",
+        "desc":
+            "Sit next to someone in a public area without looking away immediately.",
+      },
+      {
+        "id": "S12",
+        "title": "The Simple Acknowledgement",
+        "desc": "Say 'Excuse me' politely when passing someone in a hallway.",
+      },
+      {
+        "id": "S13",
+        "title": "The Warm Greeting",
+        "desc": "Say 'Hi' to a delivery driver or courier.",
+      },
+      {
+        "id": "S14",
+        "title": "The Small Wave",
+        "desc": "Wave to a child or a pet (with owner's permission).",
+      },
+      {
+        "id": "S15",
+        "title": "The Soft Smile",
+        "desc": "Smile at three different people today.",
+      },
+      {
+        "id": "S16",
+        "title": "The Eye-Contact Challenge",
+        "desc":
+            "Maintain eye contact with a cashier until they look away first.",
+      },
+      {
+        "id": "S17",
+        "title": "The Gentle Breath",
+        "desc": "Take 3 deep breaths before entering a social space today.",
+      },
+      {
+        "id": "S18",
+        "title": "The Presence",
+        "desc":
+            "Stand in a crowded area for 5 minutes without looking at your phone.",
+      },
+      {
+        "id": "S19",
+        "title": "The Casual Nod",
+        "desc": "Nod to a stranger who makes eye contact with you.",
+      },
+      {
+        "id": "S20",
+        "title": "The Soft Voice",
+        "desc": "Say 'Have a nice day' to someone as you leave a store.",
+      },
+    ],
+    "Sprout": [
+      {
+        "id": "SP1",
+        "title": "The Compliment",
+        "desc": "Give a genuine compliment to a colleague or classmate.",
+      },
+      {
+        "id": "SP2",
+        "title": "The Question",
+        "desc": "Ask a stranger for the time or directions.",
+      },
+      {
+        "id": "SP3",
+        "title": "Small Talk",
+        "desc":
+            "Ask someone 'How is your day going?' and listen to the answer.",
+      },
+      {
+        "id": "SP4",
+        "title": "The Request",
+        "desc": "Ask a store employee for help finding a specific item.",
+      },
+      {
+        "id": "SP5",
+        "title": "The Order",
+        "desc": "Order a drink or food and ask the staff how they are doing.",
+      },
+      {
+        "id": "SP6",
+        "title": "The Greeting",
+        "desc": "Introduce yourself to someone new in your area.",
+      },
+      {
+        "id": "SP7",
+        "title": "The Weather Talk",
+        "desc": "Mention the weather to someone while waiting in a line.",
+      },
+      {
+        "id": "SP8",
+        "title": "The Simple Inquiry",
+        "desc": "Ask a coworker 'What did you do over the weekend?'",
+      },
+      {
+        "id": "SP9",
+        "title": "The Help Offer",
+        "desc":
+            "Ask someone 'Do you need help with that?' if they look struggling.",
+      },
+      {
+        "id": "SP10",
+        "title": "The Opinion",
+        "desc":
+            "Ask a friend 'What do you think of this?' about a small object.",
+      },
+      {
+        "id": "SP11",
+        "title": "The Confirmation",
+        "desc":
+            "Confirm a detail with a stranger (e.g., 'Is this the right line?').",
+      },
+      {
+        "id": "SP12",
+        "title": "The Shared Space",
+        "desc":
+            "Make a small comment about the environment (e.g., 'It's really crowded').",
+      },
+      {
+        "id": "SP13",
+        "title": "The Small Favor",
+        "desc": "Ask someone to pass you something (like a napkin) at a table.",
+      },
+      {
+        "id": "SP14",
+        "title": "The Warm Feedback",
+        "desc": "Tell a waiter that the food was great before leaving.",
+      },
+      {
+        "id": "SP15",
+        "title": "The Casual Check-in",
+        "desc":
+            "Send a 'How are you?' text to someone you haven't spoken to in a month.",
+      },
+      {
+        "id": "SP16",
+        "title": "The Open Question",
+        "desc":
+            "Ask someone 'Where is your favorite place to visit in this city?'",
+      },
+      {
+        "id": "SP17",
+        "title": "The Smallest Risk",
+        "desc": "Ask a stranger if they know where the nearest restroom is.",
+      },
+      {
+        "id": "SP18",
+        "title": "The Item Praise",
+        "desc": "Tell someone you like their shoes/bag/accessory.",
+      },
+      {
+        "id": "SP19",
+        "title": "The Polite Pause",
+        "desc":
+            "Wait for someone to finish speaking entirely before responding to them.",
+      },
+      {
+        "id": "SP20",
+        "title": "The Friendly Wave",
+        "desc":
+            "Wave and say 'Bye' to someone you just had a short interaction with.",
+      },
+    ],
+    "Leaf": [
+      {
+        "id": "L1",
+        "title": "Opinion Seeker",
+        "desc": "Ask someone for their opinion on a book, movie, or song.",
+      },
+      {
+        "id": "L2",
+        "title": "The Detail",
+        "desc":
+            "Ask a follow-up question after someone tells you something about themselves.",
+      },
+      {
+        "id": "L3",
+        "title": "The Recommendation",
+        "desc":
+            "Ask a stranger for a recommendation for a good place to eat nearby.",
+      },
+      {
+        "id": "L4",
+        "title": "The Connection",
+        "desc":
+            "Find a common interest with someone and talk about it for 2 minutes.",
+      },
+      {
+        "id": "L5",
+        "title": "The Helpful Hand",
+        "desc":
+            "Offer to help someone with a small task (like carrying a bag).",
+      },
+      {
+        "id": "L6",
+        "title": "The Social Observation",
+        "desc":
+            "Start a conversation based on something happening around you both.",
+      },
+      {
+        "id": "L7",
+        "title": "The Open Ended Question",
+        "desc": "Ask someone 'How did you get into this line of work?'",
+      },
+      {
+        "id": "L8",
+        "title": "The Active Listener",
+        "desc":
+            "Listen to someone for 3 minutes without interrupting, then summarize what they said.",
+      },
+      {
+        "id": "L9",
+        "title": "The Shared Laugh",
+        "desc": "Tell a short, funny story or a joke to a small group.",
+      },
+      {
+        "id": "L10",
+        "title": "The Curiosity",
+        "desc":
+            "Ask someone where they are from and what they like about that place.",
+      },
+      {
+        "id": "L11",
+        "title": "The Sincere Interest",
+        "desc": "Ask a colleague about their hobbies outside of work.",
+      },
+      {
+        "id": "L12",
+        "title": "The Soft Advice",
+        "desc": "Give someone a helpful tip on something you are good at.",
+      },
+      {
+        "id": "L13",
+        "title": "The Group Nod",
+        "desc": "Agree with someone's point in a small group discussion.",
+      },
+      {
+        "id": "L14",
+        "title": "The Casual Invitation",
+        "desc": "Ask someone 'Would you like to join us for lunch?'",
+      },
+      {
+        "id": "L15",
+        "title": "The Honest Reflection",
+        "desc":
+            "Tell someone 'I really appreciated it when you did X' and explain why.",
+      },
+      {
+        "id": "L16",
+        "title": "The Curiosity Gap",
+        "desc": "Ask someone 'I've always wondered, how does X actually work?'",
+      },
+      {
+        "id": "L17",
+        "title": "The Small Group Lead",
+        "desc":
+            "Ask a question that requires 2 or 3 people in a group to answer.",
+      },
+      {
+        "id": "L18",
+        "title": "The Genuine Compliment",
+        "desc":
+            "Compliment someone on a personality trait (e.g., 'You're a great listener').",
+      },
+      {
+        "id": "L19",
+        "title": "The Shared Experience",
+        "desc": "Say 'I've been in that situation too' during a conversation.",
+      },
+      {
+        "id": "L20",
+        "title": "The Meaningful Pause",
+        "desc":
+            "Allow a silence to happen in a conversation without rushing to fill it.",
+      },
+    ],
+    "Stem": [
+      {
+        "id": "ST1",
+        "title": "The Brave Start",
+        "desc": "Start a conversation with someone you don't know well.",
+      },
+      {
+        "id": "ST2",
+        "title": "The Honest Share",
+        "desc": "Share a small personal story or opinion in a group setting.",
+      },
+      {
+        "id": "ST3",
+        "title": "The Debate",
+        "desc": "Politely disagree with someone's opinion and explain why.",
+      },
+      {
+        "id": "ST4",
+        "title": "The Group Entry",
+        "desc":
+            "Join a group conversation and contribute a thoughtful sentence.",
+      },
+      {
+        "id": "ST5",
+        "title": "The Topic Lead",
+        "desc": "Bring up a new topic of conversation in a social group.",
+      },
+      {
+        "id": "ST6",
+        "title": "The Public Question",
+        "desc": "Ask a question in a public meeting or a classroom setting.",
+      },
+      {
+        "id": "ST7",
+        "title": "The Bold Request",
+        "desc": "Ask a stranger if you can sit next to them at a cafe or park.",
+      },
+      {
+        "id": "ST8",
+        "title": "The Conversation Bridge",
+        "desc":
+            "Introduce two people who don't know each other and find a commonality.",
+      },
+      {
+        "id": "ST9",
+        "title": "The Assertive Need",
+        "desc":
+            "Politely ask someone to move or stop doing something that bothers you.",
+      },
+      {
+        "id": "ST10",
+        "title": "The Storyteller",
+        "desc":
+            "Take the lead in telling a story to a group of 3 or more people.",
+      },
+      {
+        "id": "ST11",
+        "title": "The Open Challenge",
+        "desc":
+            "Challenge a common opinion in a group in a friendly, respectful way.",
+      },
+      {
+        "id": "ST12",
+        "title": "The Social Initiative",
+        "desc":
+            "Be the first person to say 'Hello' to everyone when entering a room.",
+      },
+      {
+        "id": "ST13",
+        "title": "The Empathetic Listen",
+        "desc": "Listen to someone venting and provide a supportive response.",
+      },
+      {
+        "id": "ST14",
+        "title": "The Public Presentation",
+        "desc":
+            "Speak for 1-2 minutes about a topic you love in a social gathering.",
+      },
+      {
+        "id": "ST15",
+        "title": "The Vulnerable Share",
+        "desc":
+            "Admit to a group that you were nervous about something, and laugh about it.",
+      },
+      {
+        "id": "ST16",
+        "title": "The Boundary Set",
+        "desc":
+            "Politely decline an invitation you don't want to attend without over-explaining.",
+      },
+      {
+        "id": "S17",
+        "title": "The Active Mediator",
+        "desc": "Help two people find a middle ground in a disagreement.",
+      },
+      {
+        "id": "S18",
+        "title": "The Public Compliment",
+        "desc": "Publicly praise someone's effort or achievement in a group.",
+      },
+      {
+        "id": "S19",
+        "title": "The Direct Approach",
+        "desc":
+            "Ask someone directly for a favor or a piece of advice you need.",
+      },
+      {
+        "id": "S20",
+        "title": "The Conversation Pivot",
+        "desc":
+            "Smoothly transition a conversation from a boring topic to an interesting one.",
+      },
+    ],
+    "Bloom": [
+      {
+        "id": "B1",
+        "title": "The Gift",
+        "desc":
+            "Give a small treat to someone and say 'I thought you'd like this'.",
+      },
+      {
+        "id": "B2",
+        "title": "The Bold Lead",
+        "desc":
+            "Suggest a plan or a place to visit to a small group of people.",
+      },
+      {
+        "id": "B3",
+        "title": "The Appreciation",
+        "desc":
+            "Tell someone specifically why you appreciate having them in your life.",
+      },
+      {
+        "id": "B4",
+        "title": "The Social Host",
+        "desc":
+            "Organize a small get-together or a coffee date for a few people.",
+      },
+      {
+        "id": "B5",
+        "title": "The Deep Dive",
+        "desc":
+            "Have a deep, meaningful conversation with someone for over 15 minutes.",
+      },
+      {
+        "id": "B6",
+        "title": "The Confidence Peak",
+        "desc": "Initiate a conversation with someone you find intimidating.",
+      },
+      {
+        "id": "B7",
+        "title": "The Public Toast",
+        "desc":
+            "Make a short, positive toast or shout-out to someone in a group.",
+      },
+      {
+        "id": "B8",
+        "title": "The Boundary Setter",
+        "desc":
+            "Say 'No' to a request firmly but kindly, without over-explaining.",
+      },
+      {
+        "id": "B9",
+        "title": "The Direct Request",
+        "desc": "Ask someone you admire for a 10-minute chat or mentorship.",
+      },
+      {
+        "id": "B10",
+        "title": "The Emotional Lead",
+        "desc":
+            "Initiate a conversation about feelings or mental health with a friend.",
+      },
+      {
+        "id": "B11",
+        "title": "The Social Mediator",
+        "desc":
+            "Help two people resolve a small conflict through a calm conversation.",
+      },
+      {
+        "id": "B12",
+        "title": "The Bold Compliment",
+        "desc":
+            "Tell a complete stranger something you genuinely admire about them.",
+      },
+      {
+        "id": "B13",
+        "title": "The Networking Move",
+        "desc":
+            "Introduce yourself to a professional in your field and ask for advice.",
+      },
+      {
+        "id": "B14",
+        "title": "The Courageous Truth",
+        "desc":
+            "Tell someone a truth that is difficult but helpful for the relationship.",
+      },
+      {
+        "id": "B15",
+        "title": "The Full Bloom",
+        "desc":
+            "Host a small social event and make sure every guest feels welcome.",
+      },
+      {
+        "id": "B16",
+        "title": "The Public Speaker",
+        "desc":
+            "Volunteer to speak or lead a small part of a meeting or event.",
+      },
+      {
+        "id": "B17",
+        "title": "The Vulnerable Lead",
+        "desc": "Share a struggle you've overcome to encourage someone else.",
+      },
+      {
+        "id": "B18",
+        "title": "The Bold Apology",
+        "desc":
+            "Initiate a conversation to apologize for a past mistake, even if it was long ago.",
+      },
+      {
+        "id": "B19",
+        "title": "The Mentor",
+        "desc":
+            "Offer to help someone who is less experienced than you with a skill.",
+      },
+      {
+        "id": "B20",
+        "title": "The Social Architect",
+        "desc":
+            "Create a new social tradition or a recurring meetup for a group of friends.",
+      },
+    ],
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    double progress = (_totalCompleted / 100).clamp(0.0, 1.0);
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F7F4),
+      appBar: AppBar(
+        title: Text("Hello, $_userName!"),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.teal,
+        actions: [
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const StreakScreen()),
+            ),
+            child: Container(
+              margin: const EdgeInsets.only(right: 15),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.fireplace, color: Colors.white, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    "$_currentStreak",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.person_outline),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ProfileScreen()),
+              );
+              _loadUserData();
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.history),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const HistoryScreen()),
+            ),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Your Growth Progress",
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.teal,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 15,
+                backgroundColor: Colors.teal.withOpacity(0.1),
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.teal),
+              ),
+            ),
+            Text(
+              "${(progress * 100).toInt()}% Confident",
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 30),
+            const Text(
+              "Choose your growth stage:",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.teal,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView(
+                children: [
+                  _levelCard(context, "Seedling", Icons.grass, Colors.green),
+                  const SizedBox(height: 15),
+                  _levelCard(context, "Sprout", Icons.eco, Colors.lightGreen),
+                  const SizedBox(height: 15),
+                  _levelCard(
+                    context,
+                    "Leaf",
+                    Icons.opacity,
+                    Colors.greenAccent,
+                  ),
+                  const SizedBox(height: 15),
+                  _levelCard(context, "Stem", Icons.stadium, Colors.lime),
+                  const SizedBox(height: 15),
+                  _levelCard(
+                    context,
+                    "Bloom",
+                    Icons.local_florist,
+                    Colors.teal,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _levelCard(
+    BuildContext context,
+    String levelName,
+    IconData icon,
+    Color color,
+  ) {
+    return InkWell(
+      onTap: () async {
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => TaskScreen(
+              userName: _userName,
+              levelName: levelName,
+              tasks: allTasks[levelName]!,
+            ),
+          ),
+        );
+        if (result == true) {
+          _updateProgressAndStreak(levelName); // Pass the level name here!
+        }
+      },
+
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 25,
+              backgroundColor: color.withOpacity(0.2),
+              child: Icon(icon, color: color, size: 25),
+            ),
+            const SizedBox(width: 15),
+            Text(
+              levelName,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const Spacer(),
+            const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 4. STREAK SCREEN ---
+class StreakScreen extends StatelessWidget {
+  const StreakScreen({super.key});
+
+  Future<Map<String, int>> _loadStreaks() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    return {
+      "current": prefs.getInt('currentStreak') ?? 0,
+      "best": prefs.getInt('bestStreak') ?? 0,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F7F4),
+      appBar: AppBar(
+        title: const Text("My Streak"),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.teal,
+      ),
+      body: FutureBuilder<Map<String, int>>(
+        future: _loadStreaks(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting)
+            return const Center(child: CircularProgressIndicator());
+          int current = snapshot.data?['current'] ?? 0;
+          int best = snapshot.data?['best'] ?? 0;
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.fireplace, size: 120, color: Colors.orange),
+                const SizedBox(height: 20),
+                const Text(
+                  "Current Streak",
+                  style: TextStyle(fontSize: 20, color: Colors.grey),
+                ),
+                Text(
+                  "$current Days",
+                  style: const TextStyle(
+                    fontSize: 48,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.teal,
+                  ),
+                ),
+                const SizedBox(height: 40),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.emoji_events, color: Colors.amber),
+                      const SizedBox(width: 10),
+                      Text(
+                        "Best Streak: $best Days",
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// --- 5. PROFILE SCREEN ---
+// --- 5. PROFILE SCREEN (Complete & Fixed) ---
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  String _currentName = "";
+  final TextEditingController _editController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadName();
+  }
+
+  void _loadName() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _currentName = prefs.getString('userName') ?? "Brave Soul";
+      _editController.text = _currentName;
+    });
+  }
+
+  void _updateName() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('userName', _editController.text);
+    setState(() {
+      _currentName = _editController.text;
+    });
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text("Profile updated!")));
+  }
+
+  void _resetAllData() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const WelcomeScreen()),
+      (route) => false,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F7F4),
+      appBar: AppBar(
+        title: const Text("My Profile"),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.teal,
+      ),
+      body: SingleChildScrollView(
+        // This prevents the keyboard overflow crash
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            children: [
+              const CircleAvatar(
+                radius: 50,
+                backgroundColor: Colors.teal,
+                child: Icon(Icons.person, size: 50, color: Colors.white),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                _currentName,
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.teal,
+                ),
+              ),
+              const Text(
+                "Confident Grower",
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 40),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _editController,
+                      decoration: const InputDecoration(
+                        labelText: "Update Name/Title",
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _updateName,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.teal,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text("Save Changes"),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 60), // Fixed spacing for scroll view
+              TextButton(
+                onPressed: () {
+                  showDialog(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text("Reset Data?"),
+                      content: const Text(
+                        "This will delete all progress. Are you sure?",
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text("Cancel"),
+                        ),
+                        TextButton(
+                          onPressed: _resetAllData,
+                          child: const Text(
+                            "Reset",
+                            style: TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+                child: const Text(
+                  "Reset All Progress",
+                  style: TextStyle(color: Colors.red),
+                ),
+              ),
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// --- 6. TASK SCREEN ---
+class TaskScreen extends StatefulWidget {
+  final String userName;
+  final String levelName;
+  final List<Map<String, String>> tasks;
+  const TaskScreen({
+    super.key,
+    required this.userName,
+    required this.levelName,
+    required this.tasks,
+  });
+
+  @override
+  State<TaskScreen> createState() => _TaskScreenState();
+}
+
+class _TaskScreenState extends State<TaskScreen> {
+  late List<Map<String, String>> _sessionPool;
+  Map<String, String>? _currentTask;
+  int _completedCount = 0;
+  bool _isCompleted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initTaskPool();
+  }
+
+  void _initTaskPool() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    List<String> completedIds = prefs.getStringList('completedTasks') ?? [];
+
+    List<Map<String, String>> availableTasks = widget.tasks.where((task) {
+      return !completedIds.contains(task['id']);
+    }).toList();
+
+    setState(() {
+      _sessionPool = availableTasks;
+      _sessionPool.shuffle();
+      _pickRandomTask();
+    });
+  }
+
+  void _pickRandomTask() {
+    setState(() {
+      _currentTask = _sessionPool.isNotEmpty ? _sessionPool.first : null;
+    });
+  }
+
+  void _completeTask() {
+    if (_currentTask == null) return; // Safety check
+
+    setState(() => _isCompleted = true);
+    Future.delayed(const Duration(milliseconds: 600), () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ReflectionScreen(
+            taskTitle: _currentTask?['title'] ?? "Unknown Task",
+            onReflectionDone: (anxiety, note) async {
+              await _saveTaskCompletion(
+                _currentTask?['id'] ?? "unknown",
+                _currentTask?['title'] ?? "Unknown Task",
+                _currentTask?['desc'] ??
+                    "No description", // <--- Add this line here
+                anxiety,
+                note,
+              );
+              setState(() {
+                _completedCount++;
+                if (_sessionPool.isNotEmpty) _sessionPool.removeAt(0);
+                _isCompleted = false;
+                _pickRandomTask();
+              });
+              if (_completedCount % 10 == 0) _showMilestoneDialog();
+            },
+          ),
+        ),
+      );
+    });
+  }
+
+  Future<void> _saveTaskCompletion(
+    String id,
+    String title,
+    String desc,
+    int anxiety,
+    String note,
+  ) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    // 1. Save to completed IDs list
+    List<String> completedIds = prefs.getStringList('completedTasks') ?? [];
+    completedIds.add(id);
+    await prefs.setStringList('completedTasks', completedIds);
+
+    // 2. Format the date to be human-readable (e.g., "Oct 27, 2023 - 4:30 PM")
+    String formattedDate = DateFormat(
+      'MMM d, yyyy - hh:mm a',
+    ).format(DateTime.now());
+
+    // 3. Save to History
+    String? historyJson = prefs.getString('history');
+    List<dynamic> historyList = historyJson != null
+        ? jsonDecode(historyJson)
+        : [];
+    historyList.add({
+      "title": title,
+      "desc": desc,
+      "date": formattedDate, // <--- Saved as a pretty string now
+      "anxiety": anxiety,
+      "note": note,
+    });
+    await prefs.setString('history', jsonEncode(historyList));
+  }
+
+  void _showMilestoneDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          widget.levelName == "Bloom" ? "🌟 Full Bloom!" : "✨ You're Growing!",
+        ),
+        content: Text(
+          widget.levelName == "Bloom"
+              ? "You've completed ${_completedCount} tasks at the highest level! You've reached the peak of confidence. Keep practicing to maintain your glow!"
+              : "You've completed ${_completedCount} tasks in this stage. Ready for a harder level?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              widget.levelName == "Bloom"
+                  ? "I'll keep practicing"
+                  : "I'll stay here",
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context, true);
+            },
+            child: Text(
+              widget.levelName == "Bloom"
+                  ? "Back to Map"
+                  : "Explore Next Level",
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_currentTask == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF0F7F4),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.stars, size: 80, color: Colors.teal),
+              const SizedBox(height: 20),
+              const Text(
+                "Stage Mastered!",
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.teal,
+                ),
+              ),
+              const SizedBox(height: 30),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text("Return to Map"),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F7F4),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: BackButton(
+          color: Colors.teal,
+          onPressed: () {
+            if (_completedCount > 0) {
+              Navigator.pop(context, true);
+            } else {
+              Navigator.pop(context);
+            }
+          },
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Go ${widget.userName}!",
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.teal,
+              ),
+            ),
+            Text(
+              "Stage: ${widget.levelName}",
+              style: const TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 40),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(30),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(30),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 15,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    _isCompleted ? Icons.check_circle : Icons.wb_sunny_outlined,
+                    color: _isCompleted ? Colors.green : Colors.orange,
+                    size: 50,
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    _currentTask?['title'] ?? "Challenge",
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 15),
+                  Text(
+                    _currentTask?['desc'] ?? "Challenge description loading...",
+                    style: const TextStyle(fontSize: 16, color: Colors.black54),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 30),
+                  Text(
+                    "Tasks completed this session: $_completedCount",
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isCompleted ? null : _completeTask,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                      ),
+                      child: Text(
+                        _isCompleted ? "Great job!" : "I did it!",
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 6. REFLECTION SCREEN ---
+class ReflectionScreen extends StatefulWidget {
+  final String taskTitle;
+  final Function(int anxiety, String note) onReflectionDone;
+  const ReflectionScreen({
+    super.key,
+    required this.taskTitle,
+    required this.onReflectionDone,
+  });
+
+  @override
+  State<ReflectionScreen> createState() => _ReflectionScreenState();
+}
+
+class _ReflectionScreenState extends State<ReflectionScreen> {
+  double _anxietyLevel = 5;
+  final TextEditingController _noteController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F7F4),
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Reflect on your growth",
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.teal,
+              ),
+            ),
+            Text(
+              "Task: ${widget.taskTitle}",
+              style: const TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 40),
+            const Text(
+              "How anxious did you feel? (1-10)",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            Slider(
+              value: _anxietyLevel,
+              min: 1,
+              max: 10,
+              divisions: 9,
+              activeColor: Colors.teal,
+              onChanged: (v) => setState(() => _anxietyLevel = v),
+            ),
+            Text(
+              "Level: ${_anxietyLevel.toInt()}",
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 30),
+            const Text(
+              "What actually happened?",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _noteController,
+              maxLines: 4,
+              decoration: InputDecoration(
+                hintText: "I felt nervous, but...",
+                fillColor: Colors.white,
+                filled: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(15),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 30),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () {
+                  widget.onReflectionDone(
+                    _anxietyLevel.toInt(),
+                    _noteController.text,
+                  );
+                  Navigator.pop(context);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                ),
+                child: const Text(
+                  "Finish Reflection",
+                  style: TextStyle(fontSize: 18),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 7. HISTORY SCREEN ---
+class HistoryScreen extends StatelessWidget {
+  const HistoryScreen({super.key});
+
+  Future<List<dynamic>> _loadHistory() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? historyJson = prefs.getString('history');
+    return historyJson != null ? jsonDecode(historyJson) : [];
+  }
+
+  // This function creates the professional popup
+  void _showTaskDetail(BuildContext context, dynamic entry) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          entry['title'] ?? "Task Detail",
+          style: const TextStyle(
+            color: Colors.teal,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "The Challenge:",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(
+              entry['desc'] ?? "Description not available for this entry.",
+              style: const TextStyle(fontSize: 15, color: Colors.black87),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              "Your Experience:",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(
+              "Anxiety Level: ${entry['anxiety']}/10",
+              style: const TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              entry['note'] ?? "No notes added.",
+              style: const TextStyle(
+                fontSize: 15,
+                fontStyle: FontStyle.italic,
+                color: Colors.grey,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              "Completed on: ${entry['date']}",
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Close", style: TextStyle(color: Colors.teal)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF0F7F4),
+      appBar: AppBar(
+        title: const Text("My Growth Journey"),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.teal,
+      ),
+      body: FutureBuilder<List<dynamic>>(
+        future: _loadHistory(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting)
+            return const Center(child: CircularProgressIndicator());
+          if (!snapshot.hasData || snapshot.data!.isEmpty)
+            return const Center(
+              child: Text("No reflections yet. Start your journey!"),
+            );
+
+          List<dynamic> history = snapshot.data!;
+          return ListView.builder(
+            padding: const EdgeInsets.all(20),
+            itemCount: history.length,
+            itemBuilder: (context, index) {
+              var entry = history.reversed.toList()[index];
+              return InkWell(
+                // Added InkWell to make it clickable
+                onTap: () => _showTaskDetail(context, entry),
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.all(15),
+                    title: Text(
+                      entry['title'],
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Change Row to Wrap to prevent the "Right Overflow"
+                        Wrap(
+                          spacing: 10, // Space between items
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.calendar_today,
+                                  size: 10,
+                                  color: Colors.grey,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  "${entry['date']}",
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.favorite,
+                                  size: 10,
+                                  color: Colors.redAccent,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  "Anxiety: ${entry['anxiety']}/10",
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          entry['note'],
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+
+                    trailing: const Icon(
+                      Icons.chevron_right,
+                      color: Colors.teal,
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}

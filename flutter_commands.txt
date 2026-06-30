@@ -1,0 +1,22 @@
+flutter clean
+flutter pub get
+flutter build apk --release
+
+Find: color: Colors.teal,
+Replace with: color: Theme.of(context).colorScheme.primary,
+
+Find: color: Colors.grey, or color: Colors.black54, or color: Colors.black87,
+Replace with: color: Theme.of(context).colorScheme.onSurfaceVariant,
+
+Change this: color: Colors.white, 
+To this: color: Theme.of(context).colorScheme.surfaceVariant,
+
+FIND: backgroundColor: const Color(0xFFF0F7F4), (or any specific light color)
+REPLACE WITH: backgroundColor: Theme.of(context).colorScheme.surface,
+
+FIND: color: Colors.white, (inside a BoxDecoration or Card)
+REPLACE WITH: color: Theme.of(context).colorScheme.surfaceVariant,
+
+FIND: foregroundColor: Colors.teal, or color: Colors.teal,
+REPLACE WITH: foregroundColor: Theme.of(context).colorScheme.primary, 
+(or color: Theme.of(context).colorScheme.primary,)
