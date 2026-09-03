@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="default_web_client_id" translatable="false">370976164884-2g1tv4n98k60hhge8m6gdn7q62o02pn8.apps.googleusercontent.com</string>
+    <string name="gcm_defaultSenderId" translatable="false">370976164884</string>
+    <string name="google_api_key" translatable="false">AIzaSyChD9ZQ5ch1LQRW4DMNmJg0z3UvAVoD8BU</string>
+    <string name="google_app_id" translatable="false">1:370976164884:android:7fa7f59db594543992ab01</string>
+    <string name="google_crash_reporting_api_key" translatable="false">AIzaSyChD9ZQ5ch1LQRW4DMNmJg0z3UvAVoD8BU</string>
+    <string name="google_storage_bucket" translatable="false">bloom-874d6.firebasestorage.app</string>
+    <string name="project_id" translatable="false">bloom-874d6</string>
+</resources>

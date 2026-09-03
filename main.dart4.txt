@@ -1,0 +1,1300 @@
+import 'package:flutter/material.dart';
+// import 'dart:math';
+// import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+// import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(); // Initialize Firebase
+  await GlobalSettings.load();
+  runApp(const BloomApp());
+}
+
+// --- 1. GLOBAL STATE & SETTINGS ---
+class GlobalSettings {
+  static ValueNotifier<Color> themeColor = ValueNotifier(Colors.teal);
+  static ValueNotifier<String> language = ValueNotifier('en');
+  static ValueNotifier<ThemeMode> themeMode = ValueNotifier(ThemeMode.light);
+
+  static Future<void> load() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    themeColor.value = Color(prefs.getInt('themeColor') ?? Colors.teal.value);
+    themeMode.value = ThemeMode.values[prefs.getInt('themeMode') ?? 0];
+    language.value = prefs.getString('language') ?? 'en';
+  }
+
+  static Future<void> saveTheme(Color color) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('themeColor', color.toARGB32());
+    themeColor.value = color;
+  }
+
+  static Future<void> saveLanguage(String lang) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('language', lang);
+    language.value = lang;
+  }
+
+  static Future<void> saveThemeMode(ThemeMode mode) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('themeMode', mode.index);
+    themeMode.value = mode;
+  }
+}
+
+// --- 2. CLOUD SERVICES (Firebase Logic) ---
+class AuthService {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  // Stream to check if user is logged in
+  Stream<User?> get userStream => _auth.authStateChanges();
+
+  // Sign Out
+  Future<void> signOut() async {
+    await _auth.signOut();
+  }
+
+  // Google Sign-In
+  Future<UserCredential?> signInWithGoogle() async {
+    final GoogleSignInAccount? googleUser = await GoogleSignIn().signIn();
+    if (googleUser == null) return null;
+
+    final GoogleSignInAuthentication googleAuth =
+        await googleUser.authentication;
+    final AuthCredential credential = GoogleAuthProvider.credential(
+      accessToken: googleAuth.accessToken,
+      idToken: googleAuth.idToken,
+    );
+    return await _auth.signInWithCredential(credential);
+  }
+
+  // // Facebook Sign-In
+  // Future<UserCredential?> signInWithFacebook() async {
+  //   final LoginResult result = await FacebookAuth.instance.login();
+  //   if (result.status != LoginStatus.success) return null;
+
+  //   // Use accessToken instead of tokenString
+  //   final AuthCredential credential = FacebookAuthProvider.credential(
+  //     result.accessToken!.token,
+  //   );
+  //   return await _auth.signInWithCredential(credential);
+  // }
+
+  // Phone Sign-In (Part 1: Send Code)
+  Future<void> verifyPhone(
+    String phoneNumber,
+    Function(String) onCodeSent,
+  ) async {
+    await _auth.verifyPhoneNumber(
+      phoneNumber: phoneNumber,
+      // FIX 1: Removed the Duration and replaced it with the expected function
+      // or simply removed it if not strictly needed for your version.
+      // If your version wants a function, we provide an empty one.
+      codeAutoRetrievalTimeout: (String verificationId) {
+        // This is called when the auto-retrieval times out
+      },
+      verificationCompleted: (PhoneAuthCredential credential) async {
+        await _auth.signInWithCredential(credential);
+      },
+      verificationFailed: (FirebaseAuthException e) {
+        throw e;
+      },
+      // FIX 2: Changed 'int resendToken' to 'int? resendToken'
+      // Because the token can now be null (nullable).
+      codeSent: (String verificationId, int? resendToken) {
+        onCodeSent(verificationId);
+      },
+    );
+  }
+
+  // Phone Sign-In (Part 2: Verify Code)
+  Future<UserCredential> verifyOTP(
+    String verificationId,
+    String smsCode,
+  ) async {
+    AuthCredential credential = PhoneAuthProvider.credential(
+      verificationId: verificationId,
+      smsCode: smsCode,
+    );
+    return await _auth.signInWithCredential(credential);
+  }
+}
+
+class CloudService {
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+
+  // Save or Update User Profile
+  Future<void> syncUserData(User user, Map<String, dynamic> data) async {
+    await _db
+        .collection('users')
+        .doc(user.uid)
+        .set(data, SetOptions(merge: true));
+  }
+
+  // Fetch User Profile
+  Future<DocumentSnapshot> getUserData(User user) async {
+    return await _db.collection('users').doc(user.uid).get();
+  }
+
+  // Save History Entry to Cloud
+  Future<void> saveReflection(
+    User user,
+    Map<String, dynamic> reflection,
+  ) async {
+    await _db
+        .collection('users')
+        .doc(user.uid)
+        .collection('history')
+        .add(reflection);
+  }
+
+  // Increment Confidence Score
+  Future<void> updateScore(User user, double points) async {
+    await _db.collection('users').doc(user.uid).update({
+      'confidenceScore': FieldValue.increment(points),
+    });
+  }
+
+  // Handle Data Migration (Local -> Cloud)
+  Future<void> migrateLocalToCloud(User user) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? localName = prefs.getString('userName');
+    double localScore = prefs.getDouble('confidenceScore') ?? 0.0;
+    int localStreak = prefs.getInt('currentStreak') ?? 0;
+
+    if (localName != null) {
+      await syncUserData(user, {
+        'userName': localName,
+        'confidenceScore': localScore,
+        'currentStreak': localStreak,
+        'createdAt': DateTime.now(),
+      });
+    }
+  }
+}
+
+// --- 3. MAIN APP WRAPPER ---
+class BloomApp extends StatelessWidget {
+  const BloomApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder(
+      valueListenable: GlobalSettings.themeColor,
+      builder: (context, color, _) {
+        return ValueListenableBuilder(
+          valueListenable: GlobalSettings.themeMode,
+          builder: (context, mode, _) {
+            return ValueListenableBuilder(
+              valueListenable: GlobalSettings.language,
+              builder: (context, lang, _) {
+                return MaterialApp(
+                  debugShowCheckedModeBanner: false,
+                  title: 'Bloom',
+                  theme: ThemeData(
+                    colorScheme: ColorScheme.fromSeed(
+                      seedColor: color,
+                      brightness: Brightness.light,
+                    ),
+                    useMaterial3: true,
+                    fontFamily: 'Georgia',
+                  ),
+                  darkTheme: ThemeData(
+                    colorScheme: ColorScheme.fromSeed(
+                      seedColor: color,
+                      brightness: Brightness.dark,
+                    ),
+                    useMaterial3: true,
+                    fontFamily: 'Georgia',
+                  ),
+                  themeMode: mode,
+                  home: const AuthWrapper(),
+                );
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: AuthService().userStream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SplashScreen();
+        }
+        if (snapshot.hasData) {
+          // Use a wrapper to handle data migration
+          return MigrationHandler(user: snapshot.data!);
+        }
+        return const AuthScreen();
+      },
+    );
+  }
+}
+
+class MigrationHandler extends StatefulWidget {
+  final User user;
+  const MigrationHandler({super.key, required this.user});
+
+  @override
+  State<MigrationHandler> createState() => _MigrationHandlerState();
+}
+
+class _MigrationHandlerState extends State<MigrationHandler> {
+  @override
+  void initState() {
+    super.initState();
+    _migrate();
+  }
+
+  void _migrate() async {
+    await CloudService().migrateLocalToCloud(widget.user);
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            LevelMapScreen(userName: widget.user.displayName ?? "Brave Soul"),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const SplashScreen(); // Show splash while migrating
+  }
+}
+
+// --- 4. NEW AUTH SCREEN (Google, FB, Phone) ---
+class AuthScreen extends StatefulWidget {
+  const AuthScreen({super.key});
+
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  final TextEditingController _phoneController = TextEditingController();
+  String? _verificationId;
+  bool _isOtpSent = false;
+  final TextEditingController _otpController = TextEditingController();
+
+  void _handleGoogle() async {
+    try {
+      await AuthService().signInWithGoogle();
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+    }
+  }
+
+  // void _handleFacebook() async {
+  //   try {
+  //     await AuthService().signInWithFacebook();
+  //   } catch (e) {
+  //     ScaffoldMessenger.of(
+  //       context,
+  //     ).showSnackBar(SnackBar(content: Text("Error: $e")));
+  //   }
+  // //}
+
+  void _handlePhone() async {
+    if (_phoneController.text.isEmpty) return;
+    try {
+      await AuthService().verifyPhone(_phoneController.text, (id) {
+        setState(() {
+          _verificationId = id;
+          _isOtpSent = true;
+        });
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+    }
+  }
+
+  void _handleOTP() async {
+    try {
+      await AuthService().verifyOTP(_verificationId!, _otpController.text);
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Invalid OTP")));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String lang = GlobalSettings.language.value;
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      body: Padding(
+        padding: const EdgeInsets.all(30.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wb_sunny, size: 80, color: Colors.teal),
+            const SizedBox(height: 20),
+            Text(
+              AppTexts.get('welcome', lang),
+              style: TextStyle(
+                fontSize: 32,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 40),
+            if (!_isOtpSent) ...[
+              TextField(
+                controller: _phoneController,
+                keyboardType: TextInputType.phone,
+                decoration: InputDecoration(
+                  hintText: "Phone number (+1 234...)",
+                  fillColor: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest,
+                  filled: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _handlePhone,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text("Continue with Phone"),
+                ),
+              ),
+            ] else ...[
+              TextField(
+                controller: _otpController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  hintText: "Enter 6-digit OTP",
+                  fillColor: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest,
+                  filled: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _handleOTP,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text("Verify OTP"),
+                ),
+              ),
+            ],
+            const SizedBox(height: 30),
+            const Text("OR"),
+            const SizedBox(height: 30),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _handleGoogle,
+                icon: const Icon(Icons.login, color: Colors.red),
+                label: const Text("Sign in with Google"),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+              ),
+            ),
+            // const SizedBox(height: 15),
+            // SizedBox(
+            //   width: double.infinity,
+            //   child: OutlinedButton.icon(
+            //     onPressed: _handleFacebook,
+            //     icon: const Icon(Icons.facebook, color: Colors.blue),
+            //     label: const Text("Sign in with Facebook"),
+            //     style: OutlinedButton.styleFrom(
+            //       padding: const EdgeInsets.symmetric(vertical: 15),
+            //     ),
+            //   ),
+            // ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 5. UPDATED LEVEL MAP (Cloud Enabled) ---
+class LevelMapScreen extends StatefulWidget {
+  final String userName;
+  const LevelMapScreen({super.key, required this.userName});
+
+  @override
+  State<LevelMapScreen> createState() => _LevelMapScreenState();
+}
+
+class _LevelMapScreenState extends State<LevelMapScreen> {
+  double _confidenceScore = 0;
+  int _currentStreak = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCloudData();
+  }
+
+  void _loadCloudData() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      DocumentSnapshot snap = await CloudService().getUserData(user);
+      setState(() {
+        _confidenceScore = snap.get('confidenceScore') ?? 0.0;
+        _currentStreak = snap.get('currentStreak') ?? 0;
+      });
+    }
+  }
+
+  void _updateProgressAndStreak(String levelName) async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    Map<String, double> weights = {
+      "Seedling": 1.0,
+      "Sprout": 2.0,
+      "Leaf": 4.0,
+      "Stem": 7.0,
+      "Bloom": 12.0,
+    };
+    double addedPoints = weights[levelName] ?? 1.0;
+
+    await CloudService().updateScore(user, addedPoints);
+
+    // Streak Logic (Still local for speed, but synced to cloud)
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String today = DateTime.now().toString().split(' ')[0];
+    String? lastDate = prefs.getString('lastCompletedDate');
+    int streak = prefs.getInt('currentStreak') ?? 0;
+
+    if (lastDate != today) {
+      DateTime now = DateTime.now();
+      DateTime last = DateTime.parse(lastDate ?? "1970-01-01");
+      if (now.difference(last).inDays == 1)
+        streak++;
+      else
+        streak = 1;
+
+      await prefs.setInt('currentStreak', streak);
+      await prefs.setString('lastCompletedDate', today);
+
+      // Sync streak to cloud
+      await CloudService().syncUserData(user, {'currentStreak': streak});
+    }
+
+    _loadCloudData();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String lang = GlobalSettings.language.value;
+    double progress = (_confidenceScore / 100).clamp(0.0, 1.0);
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(
+        title: Text("${AppTexts.get('hello', lang)}, ${widget.userName}!"),
+        actions: [
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => StreakScreen()),
+            ),
+            child: Container(
+              margin: const EdgeInsets.only(right: 15),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.orangeAccent,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.fireplace, color: Colors.white, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    "$_currentStreak",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.person_outline),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ProfileScreen()),
+              );
+              _loadCloudData();
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await AuthService().signOut();
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const AuthScreen()),
+                (route) => false,
+              );
+            },
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppTexts.get('progress', lang),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 15,
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.primary.withOpacity(0.1),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+            Text(
+              "${(progress * 100).toInt()}% Confident",
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 30),
+            Text(
+              AppTexts.get('choose_level', lang),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView(
+                children: [
+                  _levelCard(context, "Seedling", Icons.grass, Colors.green),
+                  const SizedBox(height: 15),
+                  _levelCard(context, "Sprout", Icons.eco, Colors.lightGreen),
+                  const SizedBox(height: 15),
+                  _levelCard(
+                    context,
+                    "Leaf",
+                    Icons.opacity,
+                    Colors.greenAccent,
+                  ),
+                  const SizedBox(height: 15),
+                  _levelCard(context, "Stem", Icons.stadium, Colors.lime),
+                  const SizedBox(height: 15),
+                  _levelCard(
+                    context,
+                    "Bloom",
+                    Icons.local_florist,
+                    Colors.teal,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _levelCard(
+    BuildContext context,
+    String levelName,
+    IconData icon,
+    Color color,
+  ) {
+    return InkWell(
+      onTap: () async {
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                TaskScreen(userName: widget.userName, levelName: levelName),
+          ),
+        );
+        if (result == true) _updateProgressAndStreak(levelName);
+      },
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 25,
+              backgroundColor: color.withOpacity(0.2),
+              child: Icon(icon, color: color, size: 25),
+            ),
+            const SizedBox(width: 15),
+            Text(
+              levelName,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const Spacer(),
+            const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 6. UPDATED TASK SCREEN (Cloud Sync) ---
+class TaskScreen extends StatefulWidget {
+  final String userName;
+  final String levelName;
+  const TaskScreen({
+    super.key,
+    required this.userName,
+    required this.levelName,
+  });
+
+  @override
+  State<TaskScreen> createState() => _TaskScreenState();
+}
+
+class _TaskScreenState extends State<TaskScreen> {
+  late List<Map<String, String>> _sessionPool;
+  Map<String, String>? _currentTask;
+  int _completedCount = 0;
+  bool _isCompleted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initTaskPool();
+  }
+
+  void _initTaskPool() async {
+    String lang = GlobalSettings.language.value;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    List<String> completedIds = prefs.getStringList('completedTasks') ?? [];
+
+    List<Map<String, String>> allLevelTasks = TaskLibrary.getTasks(
+      widget.levelName,
+      lang,
+    );
+    List<Map<String, String>> availableTasks = allLevelTasks
+        .where((task) => !completedIds.contains(task['id']))
+        .toList();
+
+    setState(() {
+      _sessionPool = availableTasks;
+      _sessionPool.shuffle();
+      _pickRandomTask();
+    });
+  }
+
+  void _pickRandomTask() {
+    setState(() {
+      _currentTask = _sessionPool.isNotEmpty ? _sessionPool.first : null;
+    });
+  }
+
+  void _completeTask() {
+    if (_currentTask == null) return;
+    setState(() => _isCompleted = true);
+    Future.delayed(const Duration(milliseconds: 600), () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => ReflectionScreen(
+            taskTitle: _currentTask?['title'] ?? "Challenge",
+            onReflectionDone: (anxiety, note) async {
+              await _saveTaskCompletion(
+                _currentTask?['id'] ?? "unknown",
+                _currentTask?['title'] ?? "Unknown",
+                _currentTask?['desc'] ?? "No desc",
+                anxiety,
+                note,
+              );
+              setState(() {
+                _completedCount++;
+                if (_sessionPool.isNotEmpty) _sessionPool.removeAt(0);
+                _isCompleted = false;
+                _pickRandomTask();
+              });
+              if (_completedCount % 10 == 0) _showMilestoneDialog();
+            },
+          ),
+        ),
+      );
+    });
+  }
+
+  Future<void> _saveTaskCompletion(
+    String id,
+    String title,
+    String desc,
+    int anxiety,
+    String note,
+  ) async {
+    User? user = FirebaseAuth.instance.currentUser;
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    // Local Storage
+    List<String> completedIds = prefs.getStringList('completedTasks') ?? [];
+    completedIds.add(id);
+    await prefs.setStringList('completedTasks', completedIds);
+
+    // Cloud Storage
+    if (user != null) {
+      await CloudService().saveReflection(user, {
+        "title": title,
+        "desc": desc,
+        "date": DateFormat('MMM d, yyyy - hh:mm a').format(DateTime.now()),
+        "anxiety": anxiety,
+        "note": note,
+      });
+    }
+  }
+
+  void _showMilestoneDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          widget.levelName == "Bloom" ? "🌟 Full Bloom!" : "✨ You're Growing!",
+        ),
+        content: Text(
+          widget.levelName == "Bloom"
+              ? "You've reached the peak of confidence!"
+              : "Ready for a harder level?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("I'll stay here"),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pop(context, true);
+            },
+            child: const Text("Explore Next Level"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_currentTask == null) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.stars, size: 80, color: Colors.teal),
+              const SizedBox(height: 20),
+              Text(
+                "Stage Mastered!",
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 30),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text("Return to Map"),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Go ${widget.userName}!",
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+            Text(
+              "Stage: ${widget.levelName}",
+              style: const TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 40),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(30),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    _isCompleted ? Icons.check_circle : Icons.wb_sunny_outlined,
+                    color: _isCompleted ? Colors.green : Colors.orange,
+                    size: 50,
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    _currentTask?['title'] ?? "Challenge",
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 15),
+                  Text(
+                    _currentTask?['desc'] ?? "Description loading...",
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 30),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isCompleted ? null : _completeTask,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: Text(
+                        _isCompleted ? "Great job!" : "I did it!",
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// --- 7. REST OF THE APP (Slightly Modified for Cloud) ---
+// For brevity, I am keeping the UI of Reflection, Profile, History, and FAQ
+// virtually the same, but ensure they use GlobalSettings for language.
+
+class ReflectionScreen extends StatefulWidget {
+  final String taskTitle;
+  final Function(int anxiety, String note) onReflectionDone;
+  const ReflectionScreen({
+    super.key,
+    required this.taskTitle,
+    required this.onReflectionDone,
+  });
+  @override
+  State<ReflectionScreen> createState() => _ReflectionScreenState();
+}
+
+class _ReflectionScreenState extends State<ReflectionScreen> {
+  double _anxietyLevel = 5;
+  final TextEditingController _noteController = TextEditingController();
+  @override
+  Widget build(BuildContext context) {
+    String lang = GlobalSettings.language.value;
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(backgroundColor: Colors.transparent),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                AppTexts.get('reflect', lang),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              Text(
+                "Task: ${widget.taskTitle}",
+                style: const TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+              const SizedBox(height: 40),
+              Text(AppTexts.get('anxiety_q', lang)),
+              Slider(
+                value: _anxietyLevel,
+                min: 1,
+                max: 10,
+                divisions: 9,
+                onChanged: (v) => setState(() => _anxietyLevel = v),
+              ),
+              Text(
+                "Level: ${_anxietyLevel.toInt()}",
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 30),
+              Text(AppTexts.get('what_happened', lang)),
+              TextField(
+                controller: _noteController,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  hintText: "I felt nervous, but...",
+                  filled: true,
+                  fillColor: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    widget.onReflectionDone(
+                      _anxietyLevel.toInt(),
+                      _noteController.text,
+                    );
+                    Navigator.pop(context);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Text(AppTexts.get('finish', lang)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class HistoryScreen extends StatelessWidget {
+  const HistoryScreen({super.key});
+  Future<List<dynamic>> _loadHistory() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) return [];
+    QuerySnapshot snap = await CloudService().getUserData(user).then((_) async {
+      return await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .collection('history')
+          .get();
+    });
+    return snap.docs.map((doc) => doc.data()).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(title: const Text("My Growth Journey")),
+      body: FutureBuilder<List<dynamic>>(
+        future: _loadHistory(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting)
+            return const Center(child: CircularProgressIndicator());
+          List<dynamic> history = snapshot.data ?? [];
+          if (history.isEmpty)
+            return const Center(
+              child: Text("No reflections yet. Start your journey!"),
+            );
+          return ListView.builder(
+            padding: const EdgeInsets.all(20),
+            itemCount: history.length,
+            itemBuilder: (context, index) {
+              var entry = history.reversed.toList()[index];
+              return Card(
+                child: ListTile(
+                  title: Text(entry['title'] ?? "Task"),
+                  subtitle: Text(
+                    "${entry['date']} - Anxiety: ${entry['anxiety']}/10",
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  String _currentName = "";
+  final TextEditingController _nameController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUser();
+  }
+
+  void _loadUser() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      DocumentSnapshot snap = await CloudService().getUserData(user);
+      setState(() {
+        _currentName = snap.get('userName') ?? user.displayName ?? "Brave Soul";
+        _nameController.text = _currentName;
+      });
+    }
+  }
+
+  void _saveName() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await CloudService().syncUserData(user, {
+        'userName': _nameController.text,
+      });
+      setState(() => _currentName = _nameController.text);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      appBar: AppBar(title: const Text("My Profile")),
+      body: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          children: [
+            const CircleAvatar(radius: 50, child: Icon(Icons.person, size: 50)),
+            const SizedBox(height: 20),
+            Text(
+              _currentName,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 20),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: "Update Name"),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _saveName,
+              child: const Text("Save Changes"),
+            ),
+            const SizedBox(height: 20),
+            // Keep your Language/Theme buttons here as they were in v1.0
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class StreakScreen extends StatelessWidget {
+  const StreakScreen({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Streak")),
+      body: const Center(
+        child: Text("Your cloud-synced streak is visible on Home!"),
+      ),
+    );
+  }
+}
+
+class SplashScreen extends StatelessWidget {
+  const SplashScreen({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.teal,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wb_sunny, size: 100, color: Colors.white),
+            const Text(
+              "BLOOM",
+              style: TextStyle(
+                fontSize: 40,
+                color: Colors.white,
+                letterSpacing: 4,
+              ),
+            ),
+            const CircularProgressIndicator(color: Colors.white),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class FAQScreen extends StatelessWidget {
+  const FAQScreen({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Help & FAQ")),
+      body: const Center(child: Text("FAQ Content remains the same as v1.0")),
+    );
+  }
+}
+
+// --- TRANSLATIONS & TASK LIBRARY (Shorter for the example, keep your full lists!) ---
+class AppTexts {
+  static final Map<String, Map<String, String>> translations = {
+    'en': {
+      'welcome': 'Welcome to Bloom',
+      'subtitle': 'A safe space to grow.',
+      'progress': 'Your Growth Progress',
+      'choose_level': 'Choose your stage:',
+      'hello': 'Hello',
+      'reflect': 'Reflect on growth',
+      'anxiety_q': 'Anxiety level (1-10)?',
+      'what_happened': 'What happened?',
+      'finish': 'Finish',
+    },
+    'es': {
+      'welcome': 'Bienvenido a Bloom',
+      'subtitle': 'Un espacio seguro.',
+      'progress': 'Tu progreso',
+      'choose_level': 'Elige tu etapa:',
+      'hello': 'Hola',
+      'reflect': 'Reflexiona',
+      'anxiety_q': 'Nivel de ansiedad?',
+      'what_happened': '¿Qué pasó?',
+      'finish': 'Terminar',
+    },
+  };
+  static String get(String key, String lang) =>
+      translations[lang]?[key] ?? translations['en']![key]!;
+}
+
+class TaskLibrary {
+  static final Map<String, Map<String, List<Map<String, String>>>>
+  translations = {
+    'en': {
+      "Seedling": [
+        {
+          "id": "S1",
+          "title": "The First Step",
+          "desc": "Smile at one person today.",
+        },
+      ],
+      "Sprout": [
+        {
+          "id": "SP1",
+          "title": "The Compliment",
+          "desc": "Give a compliment to a colleague.",
+        },
+      ],
+      "Leaf": [
+        {
+          "id": "L1",
+          "title": "Opinion",
+          "desc": "Ask for a movie recommendation.",
+        },
+      ],
+      "Stem": [
+        {
+          "id": "ST1",
+          "title": "Brave Start",
+          "desc": "Start a convo with a stranger.",
+        },
+      ],
+      "Bloom": [
+        {"id": "B1", "title": "The Gift", "desc": "Give a treat to someone."},
+      ],
+    },
+    'es': {
+      "Seedling": [
+        {"id": "S1", "title": "Primer Paso", "desc": "Sonríe a alguien hoy."},
+      ],
+    },
+  };
+  static List<Map<String, String>> getTasks(String level, String lang) =>
+      translations[lang]?[level] ?? translations['en']![level]!;
+}

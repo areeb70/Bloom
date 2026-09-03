@@ -20,3 +20,6 @@ REPLACE WITH: color: Theme.of(context).colorScheme.surfaceVariant,
 FIND: foregroundColor: Colors.teal, or color: Colors.teal,
 REPLACE WITH: foregroundColor: Theme.of(context).colorScheme.primary, 
 (or color: Theme.of(context).colorScheme.primary,)
+
+Gradle tool to find your fingerprint
+./gradlew signingReport

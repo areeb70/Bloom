@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'dart:math';
+// import 'dart:math';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
@@ -25,7 +25,7 @@ class GlobalSettings {
 
   static Future<void> saveTheme(Color color) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('themeColor', color.value);
+    await prefs.setInt('themeColor', color.toARGB32());
     themeColor.value = color;
   }
 
@@ -109,6 +109,7 @@ class AppTexts {
       'finish': 'Finish Reflection',
       'streak': 'Current Streak',
       'best': 'Best Streak',
+      'points': 'Confidence Points',
     },
     'es': {
       'welcome': 'Bienvenido a Bloom',
@@ -126,12 +127,13 @@ class AppTexts {
       'finish': 'Terminar Reflexión',
       'streak': 'Racha Actual',
       'best': 'Mejor Racha',
+      'points': 'Puntos de confianza',
     },
     'fr': {
       'welcome': 'Bienvenue chez Bloom',
       'subtitle': 'Un espace sûr pour développer votre confiance.',
       'start': 'Commencer mon voyage',
-      'guest': 'Continuer en tant qu\'invité',
+      'guest': 'Continuer en tant qu invité',
       'progress': 'Votre progrès de croissance',
       'choose_level': 'Choisissez votre étape de croissance :',
       'hello': 'Bonjour',
@@ -139,10 +141,11 @@ class AppTexts {
       'history': 'Mon Voyage de Croissance',
       'reflect': 'Réfléchissez à votre croissance',
       'anxiety_q': 'À quel point vous sentiez-vous anxieux ? (1-10)',
-      'what_happened': 'Que s\'est-il passé réellement ?',
+      'what_happened': 'Que sest-il passé réellement ?',
       'finish': 'Terminer la réflexion',
       'streak': 'Série actuelle',
       'best': 'Meilleure série',
+      'points': 'Points de confiance',
     },
     'hi': {
       'welcome': 'ब्लूम में आपका स्वागत है',
@@ -160,6 +163,7 @@ class AppTexts {
       'finish': 'चिंतन समाप्त करें',
       'streak': 'वर्तमान सिलसिला',
       'best': 'सर्वश्रेष्ठ सिलसिला',
+      'points': 'आत्मविश्वास अंक',
     },
   };
 
@@ -2571,7 +2575,7 @@ class _SplashScreenState extends State<SplashScreen> {
               style: TextStyle(
                 fontSize: 40,
                 fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.surfaceVariant,
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
                 letterSpacing: 4,
               ),
             ),
@@ -2646,12 +2650,14 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                     hintStyle: TextStyle(
                       color: Theme.of(
                         context,
-                      ).colorScheme.onSurfaceVariant.withOpacity(0.6),
+                      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                       fontSize: 15,
                     ),
                     hintText: "Enter your name or nickname",
                     // This makes the box color react to Light/Dark mode
-                    fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                    fillColor: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     filled: true,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(15),
@@ -2862,7 +2868,7 @@ class _LevelMapScreenState extends State<LevelMapScreen> {
                     minHeight: 15,
                     backgroundColor: Theme.of(
                       context,
-                    ).colorScheme.primary.withOpacity(0.1),
+                    ).colorScheme.primary.withValues(alpha: 0.1),
                     valueColor: AlwaysStoppedAnimation<Color>(
                       Theme.of(context).colorScheme.primary,
                     ),
@@ -2945,11 +2951,11 @@ class _LevelMapScreenState extends State<LevelMapScreen> {
       child: Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceVariant,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               blurRadius: 10,
               offset: const Offset(0, 5),
             ),
@@ -2959,7 +2965,7 @@ class _LevelMapScreenState extends State<LevelMapScreen> {
           children: [
             CircleAvatar(
               radius: 25,
-              backgroundColor: color.withOpacity(0.2),
+              backgroundColor: color.withValues(alpha: 0.2),
               child: Icon(icon, color: color, size: 25),
             ),
             const SizedBox(width: 15),
@@ -3027,11 +3033,13 @@ class StreakScreen extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
+                        color: Colors.black.withValues(alpha: 0.05),
                         blurRadius: 10,
                       ),
                     ],
@@ -3318,11 +3326,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant,
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
+            color: Colors.black.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 5),
           ),
@@ -3546,11 +3554,13 @@ class _TaskScreenState extends State<TaskScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(30),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(30),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
+                        color: Colors.black.withValues(alpha: 0.05),
                         blurRadius: 15,
                         offset: const Offset(0, 8),
                       ),
@@ -3716,12 +3726,14 @@ class _ReflectionScreenState extends State<ReflectionScreen> {
                   // This controls the "I felt nervous, but..." HINT text
                   hintStyle: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant
-                        .withOpacity(0.6), // Make hint more muted
+                        .withValues(alpha: 0.6), // Make hint more muted
                     fontSize: 15,
                     fontWeight: FontWeight.normal, // Keep hint light
                   ),
                   hintText: "I felt nervous, but...",
-                  fillColor: Theme.of(context).colorScheme.surfaceVariant,
+                  fillColor: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest,
                   filled: true,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(15),
@@ -4030,7 +4042,9 @@ class FAQScreen extends StatelessWidget {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(15),
                     ),
-                    color: Theme.of(context).colorScheme.surfaceVariant,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     child: ExpansionTile(
                       title: Text(
                         faqData[index]['q']!,

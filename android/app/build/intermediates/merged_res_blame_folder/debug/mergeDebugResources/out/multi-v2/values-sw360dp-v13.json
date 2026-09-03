@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.areeb.bloom.app-mergeDebugResources-48:/values-sw360dp-v13/values-sw360dp-v13.xml",
+            "map": [
+                {
+                    "source": "C:\\Users\\areeb\\.gradle\\caches\\9.1.0\\transforms\\d89f996dc9f7502f5d6281815f6e27d7\\workspace\\transformed\\preference-1.2.1\\res\\values-sw360dp-v13\\values-sw360dp-v13.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "71",
+                        "endOffsets": "122"
+                    }
+                }
+            ]
+        }
+    ]
+}
