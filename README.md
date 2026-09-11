@@ -1,4 +1,4 @@
-# bloom
+# Bloom
 
 Welcome to Bloom 🌸
 
