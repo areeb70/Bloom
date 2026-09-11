@@ -1,4 +1,3 @@
-<img width="1080" height="2412" alt="Screenshot_2026-07-22-22-19-47-73_3e71aedc6e27640ddb11572d45f03080" src="https://github.com/user-attachments/assets/66016081-e4b1-4d69-881c-427634b3f299" />
 # bloom
 
 Welcome to Bloom 🌸
